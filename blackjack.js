@@ -13,7 +13,6 @@ socket.onmessage = (event) => {
 };
 
 function updateGameUI(data) {
-    document.getElementById('dealer-sum').innerText = data.dealerSum || '';
     document.getElementById('your-sum').innerText = data.playerSum || '';
     document.getElementById('results').innerText = data.message || '';
 

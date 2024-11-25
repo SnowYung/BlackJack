@@ -5,12 +5,10 @@ const server = new WebSocket.Server({ port: 8080 });
 let players = [];
 let gameState = {
     deck: [],
-    dealerSum: 0,
     playerSums: [0, 0],
-    dealerAceCount: 0,
     playerAceCounts: [0, 0],
     currentPlayer: 0,
-    hidden: null
+    gameOver: false,
 };
 
 server.on('connection', socket => {
@@ -40,10 +38,6 @@ server.on('connection', socket => {
 
 function startGame() {
     gameState.deck = buildDeck();
-    gameState.hidden = gameState.deck.pop();
-    gameState.dealerSum += getValue(gameState.hidden);
-    gameState.dealerAceCount += checkAce(gameState.hidden);
-
     dealInitialCards();
     broadcastGameState();
 }
@@ -60,7 +54,7 @@ function dealInitialCards() {
 
 function handlePlayerAction(data, socket) {
     const playerIndex = players.indexOf(socket);
-    if (playerIndex !== gameState.currentPlayer) return;
+    if (playerIndex !== gameState.currentPlayer || gameState.gameOver) return;
 
     if (data.action === 'hit') {
         if (gameState.deck.length === 0) {
@@ -71,43 +65,36 @@ function handlePlayerAction(data, socket) {
         gameState.playerSums[playerIndex] += getValue(card);
         gameState.playerAceCounts[playerIndex] += checkAce(card);
 
+        // 檢查玩家是否爆掉
         if (reduceAce(gameState.playerSums[playerIndex], gameState.playerAceCounts[playerIndex]) > 21) {
-            switchPlayer();
+            gameState.gameOver = true;
+            broadcastGameState();
+            players.forEach(player => {
+                player.send(JSON.stringify({ message: 'You Lose!', playerIndex }));
+            });
+            return;
         }
     } else if (data.action === 'stay') {
-        switchPlayer();
+        // 如果當前玩家選擇停牌，則切換到下一個玩家
+        gameState.currentPlayer = (gameState.currentPlayer + 1) % 2;
+        // 檢查是否所有玩家都已經選擇停牌
+        if (gameState.playerSums.every((sum, index) => index !== gameState.currentPlayer)) {
+            gameState.gameOver = true;
+            broadcastGameState();
+            determineWinner();
+            return;
+        }
     }
 
     broadcastGameState();
-}
-
-function switchPlayer() {
-    gameState.currentPlayer = (gameState.currentPlayer + 1) % 2;
-
-    // 如果回合轉到莊家，進行莊家的行動
-    if (gameState.currentPlayer === 0) {
-        completeDealerTurn();
-    }
-}
-
-function completeDealerTurn() {
-    while (gameState.dealerSum < 17) {
-        let card = gameState.deck.pop();
-        gameState.dealerSum += getValue(card);
-        gameState.dealerAceCount += checkAce(card);
-    }
-
-    gameState.dealerSum = reduceAce(gameState.dealerSum, gameState.dealerAceCount);
-    determineWinner();
 }
 
 function determineWinner() {
     const results = players.map((_, index) => {
         const playerSum = reduceAce(gameState.playerSums[index], gameState.playerAceCounts[index]);
         if (playerSum > 21) return 'You Lose!';
-        if (gameState.dealerSum > 21 || playerSum > gameState.dealerSum) return 'You Win!';
-        if (playerSum === gameState.dealerSum) return 'Tie!';
-        return 'You Lose!';
+        if (playerSum === 21) return 'You Win!';
+        return 'Game Over!';
     });
 
     players.forEach((player, index) => {
@@ -120,12 +107,10 @@ function determineWinner() {
 function resetGame() {
     gameState = {
         deck: [],
-        dealerSum: 0,
         playerSums: [0, 0],
-        dealerAceCount: 0,
         playerAceCounts: [0, 0],
         currentPlayer: 0,
-        hidden: null
+        gameOver: false,
     };
 }
 
@@ -134,8 +119,7 @@ function broadcastGameState() {
         player.send(JSON.stringify({
             message: 'Game Update',
             playerSum: gameState.playerSums[index],
-            dealerSum: gameState.dealerSum,
-            currentPlayer: gameState.currentPlayer
+            currentPlayer: gameState.currentPlayer,
         }));
     });
 }
