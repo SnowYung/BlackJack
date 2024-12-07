@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Online Blackjack</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="http://code.jquery.com/jquery-latest.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+        }
+        .player {
+            margin: 20px;
+        }
+        .cards {
+            display: flex;
+            justify-content: center;
+        }
+        .controls {
+            margin-top: 20px;
+        }
+        button {
+            margin: 5px;
+        }
+        form {
+            background: rgb(160, 205, 220);
+            padding: 3px;
+            position: fixed;
+            bottom: 0;
+            width: 100%;
+        }
+        #n, #m {
+            border: 0;
+            padding: 3px;
+        }
+        #n { width: 10%; }
+        #m { width: 70%; margin-right: 2px; }
+        form button { width: 9%; background: rgb(130, 224, 255); border: none; padding: 3px; }
+        #messages { list-style-type: none; margin: 0; padding: 0; }
+        #messages li { padding: 5px 10px; }
+        #messages li:nth-child(odd) { background: #eee; }
+    </style>
+</head>
+<body>
+    <h1>Online Blackjack</h1>
+    <div id="game">
+        <div class="player" id="player1">
+            <h2>Player 1</h2>
+            <div>Score: <span id="player1-sum">0</span></div>
+            <div class="cards" id="player1-cards"></div>
+        </div>
+        <div class="player" id="player2">
+            <h2>Player 2</h2>
+            <div>Score: <span id="player2-sum">0</span></div>
+            <div class="cards" id="player2-cards"></div>
+        </div>
+        <div class="controls">
+            <button id="hit" disabled>Hit</button>
+            <button id="stay" disabled>Stay</button>
+            <button id="restart" disabled>Restart Game</button>
+        </div>
+        <h3 id="status"></h3>
+    </div>
+    <ul id="messages"></ul>
+    <form action="">
+        Name: <input id="n" autocomplete="off" />
+        <input id="m" autocomplete="off" /><button>Send</button>
+    </form>
+
+    <script>
+        const socket = io();
+        let playerNumber = 0;
+
+        socket.on("player_assignment", (data) => {
+            playerNumber = data.player;
+            if (playerNumber === 0) {
+                document.getElementById("status").innerText = "Game is full.";
+            } else {
+                document.getElementById("status").innerText = `You are Player ${playerNumber}`;
+            }
+        });
+
+        socket.on("request_name_reset", () => {
+            document.getElementById("status").innerText = "Has player disconnected. Please enter your name again.";
+            resetPlayers();
+            $('#n').prop('disabled', false);
+            $('#m').prop('disabled', true);
+            playerNumber = 0;
+            disableControls();
+            $('#restart').hide();
+        });
+
+        socket.on("game_start", (data) => {
+            resetPlayers();
+            enableControls();
+            $('#restart').hide();
+        });
+
+        socket.on("game_state", (data) => {
+            updateGameState(data);
+            if (data.currentPlayer === playerNumber) {
+                enableControls();
+            } else {
+                disableControls();
+            }
+        });
+
+        socket.on("game_over", (data) => {
+            document.getElementById("status").innerText = data.result;
+            disableControls();
+            revealAllCards(data.player1, 1);
+            revealAllCards(data.player2, 2);
+            document.getElementById("player1-sum").innerText = data.player1.sum;
+            document.getElementById("player2-sum").innerText = data.player2.sum;
+            $('#restart').show();
+            document.getElementById("restart").disabled = false;
+        });
+
+        socket.on("game_restart", () => {
+            resetPlayers();
+            enableControls();
+            $('#restart').hide();
+        })
+
+        function updateGameState(data) {
+            updatePlayer(data.players.player1, 1, playerNumber === 1);
+            updatePlayer(data.players.player2, 2, playerNumber === 2);
+        }
+
+        function updatePlayer(player, playerNumber, isCurrentPlayer) {
+            const scoreElement = document.getElementById(`player${playerNumber}-sum`);
+            scoreElement.innerText = player.sum;
+            const cardsContainer = document.getElementById(`player${playerNumber}-cards`);
+            cardsContainer.innerHTML = "";
+            if (isCurrentPlayer) {
+                player.cards.forEach((card) => {
+                    const img = document.createElement("img");
+                    img.src = `/cards/${card}.png`;
+                    img.style.width = "50px";
+                    img.style.margin = "5px";
+                    cardsContainer.appendChild(img);
+                });
+            } else {
+                cardsContainer.innerHTML = "<span>Cards hidden</span>";
+                scoreElement.innerText = "???";
+            }
+        }
+
+        function revealAllCards(player, playerNumber) {
+            const cardsContainer = document.getElementById(`player${playerNumber}-cards`);
+            cardsContainer.innerHTML = "";
+            player.cards.forEach((card) => {
+                const img = document.createElement("img");
+                img.src = `/cards/${card}.png`;
+                img.style.width = "50px";
+                img.style.margin = "5px";
+                cardsContainer.appendChild(img);
+            });
+        }
+
+        function resetPlayers() {
+            document.getElementById("player1-sum").innerText = "0";
+            document.getElementById("player2-sum").innerText = "0";
+            document.getElementById("player1-cards").innerHTML = "";
+            document.getElementById("player2-cards").innerHTML = "";
+        }
+
+        function enableControls() {
+            document.getElementById("hit").disabled = false;
+            document.getElementById("stay").disabled = false;
+            $('#restart').hide();
+        }
+
+        function disableControls() {
+            document.getElementById("hit").disabled = true;
+            document.getElementById("stay").disabled = true;
+        }
+
+        document.getElementById("hit").addEventListener("click", () => {
+            socket.emit("hit");
+        });
+
+        document.getElementById("stay").addEventListener("click", () => {
+            socket.emit("stay");
+        });
+
+        document.getElementById("restart").addEventListener("click", () => {
+            socket.emit("restart_game");
+        })
+
+        $('form').submit(function(e) {
+            e.preventDefault();
+            if (!$('#n').is(':disabled')) {
+                socket.emit('set_name', { name: $('#n').val() });
+                $('#n').prop('disabled', true);
+                $('#m').prop('disabled', false);
+            } else {
+                socket.emit('message', { name: $('#n').val(), message: $('#m').val() });
+                $('#m').val('');
+            }
+            return false;
+        });
+
+        socket.on('message', obj => {
+            let msg = `<b>${obj.name}:</b> ${obj.message}`;
+            $('#messages').append($('<li>').html(msg));
+        });
+
+        socket.on('sys_c_connect', obj => {
+            let msg = `<b>SYSTEM:</b> ${obj.name} is connected`;
+            $('#messages').append($('<li>').html(msg));
+        });
+
+        socket.on('sys_c_disconnect', obj => {
+            let msg = `<b>SYSTEM:</b> ${obj.name} is disconnected`;
+            $('#messages').append($('<li>').html(msg));
+        });
+
+        socket.on('reconnect', () => {
+            socket.emit('set_name', { name: $('#n').val() });
+        });
+    </script>
+</body>
+</html>

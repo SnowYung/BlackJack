@@ -1,171 +1,187 @@
-const WebSocket = require('ws');
+const express = require("express");
+const app = express();
+const http = require("http").createServer(app);
+const io = require("socket.io")(http);
 
-const server = new WebSocket.Server({ port: 8080 });
-
-let players = [];
-let gameState = {
-    deck: [],
-    playerSums: [0, 0],
-    playerAceCounts: [0, 0],
-    currentPlayer: 0,
-    gameOver: false,
-};
-
-server.on('connection', socket => {
-    if (players.length < 2) {
-        players.push(socket);
-        socket.send(JSON.stringify({ message: 'Waiting for another player...' }));
-
-        // 當有兩個玩家時，開始遊戲
-        if (players.length === 2) {
-            startGame();
-        }
-    } else {
-        socket.send(JSON.stringify({ message: 'Game is full!' }));
-        socket.close();
-    }
-
-    socket.on('message', message => {
-        const data = JSON.parse(message);
-        handlePlayerAction(data, socket);
-    });
-
-    socket.on('close', () => {
-        players = players.filter(player => player !== socket);
-        resetGame();
-    });
-});
-
-function startGame() {
-    gameState.deck = buildDeck();
-    dealInitialCards();
-    broadcastGameState();
-}
-
-function dealInitialCards() {
-    for (let i = 0; i < 2; i++) {
-        for (let j = 0; j < players.length; j++) {
-            let card = gameState.deck.pop();
-            gameState.playerSums[j] += getValue(card);
-            gameState.playerAceCounts[j] += checkAce(card);
-        }
-    }
-}
-
-function handlePlayerAction(data, socket) {
-    const playerIndex = players.indexOf(socket);
-    if (playerIndex !== gameState.currentPlayer || gameState.gameOver) return;
-
-    if (data.action === 'hit') {
-        if (gameState.deck.length === 0) {
-            console.error('Deck is empty!');
-            return;
-        }
-        let card = gameState.deck.pop();
-        gameState.playerSums[playerIndex] += getValue(card);
-        gameState.playerAceCounts[playerIndex] += checkAce(card);
-
-        // 檢查玩家是否爆掉
-        if (reduceAce(gameState.playerSums[playerIndex], gameState.playerAceCounts[playerIndex]) > 21) {
-            gameState.gameOver = true;
-            broadcastGameState();
-            players.forEach(player => {
-                player.send(JSON.stringify({ message: 'You Lose!', playerIndex }));
-            });
-            return;
-        }
-    } else if (data.action === 'stay') {
-        // 如果當前玩家選擇停牌，則切換到下一個玩家
-        gameState.currentPlayer = (gameState.currentPlayer + 1) % 2;
-        // 檢查是否所有玩家都已經選擇停牌
-        if (gameState.playerSums.every((sum, index) => index !== gameState.currentPlayer)) {
-            gameState.gameOver = true;
-            broadcastGameState();
-            determineWinner();
-            return;
-        }
-    }
-
-    broadcastGameState();
-}
-
-function determineWinner() {
-    const results = players.map((_, index) => {
-        const playerSum = reduceAce(gameState.playerSums[index], gameState.playerAceCounts[index]);
-        if (playerSum > 21) return 'You Lose!';
-        if (playerSum === 21) return 'You Win!';
-        return 'Game Over!';
-    });
-
-    players.forEach((player, index) => {
-        player.send(JSON.stringify({ message: 'Game Over', result: results[index] }));
-    });
-
-    resetGame();
-}
-
-function resetGame() {
-    gameState = {
-        deck: [],
-        playerSums: [0, 0],
-        playerAceCounts: [0, 0],
-        currentPlayer: 0,
-        gameOver: false,
-    };
-}
-
-function broadcastGameState() {
-    players.forEach((player, index) => {
-        player.send(JSON.stringify({
-            message: 'Game Update',
-            playerSum: gameState.playerSums[index],
-            currentPlayer: gameState.currentPlayer,
-        }));
-    });
-}
+let deck = [];
+let players = {};
+let currentPlayer = 1;
 
 function buildDeck() {
     const values = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
     const types = ["C", "D", "H", "S"];
-    let deck = [];
-
-    for (let i = 0; i < types.length; i++) {
-        for (let j = 0; j < values.length; j++) {
-            deck.push(values[j] + "-" + types[i]);
+    deck = [];
+    for (let type of types) {
+        for (let value of values) {
+            deck.push(`${value}-${type}`);
         }
     }
-    return shuffleDeck(deck);
 }
 
-function shuffleDeck(deck) {
+function shuffleDeck() {
     for (let i = 0; i < deck.length; i++) {
-        const j = Math.floor(Math.random() * deck.length);
-        const temp = deck[i];
-        deck[i] = deck[j];
-        deck[j] = temp;
+        let j = Math.floor(Math.random() * deck.length);
+        [deck[i], deck[j]] = [deck[j], deck[i]];
     }
-    return deck;
+}
+
+function drawCard(player) {
+    const card = deck.pop();
+    const value = getValue(card);
+    const ace = checkAce(card);
+
+    player.cards.push(card);
+    player.sum += value;
+    player.aceCount += ace;
+
+    player.sum = reduceAce(player.sum, player.aceCount);
 }
 
 function getValue(card) {
-    const data = card.split("-");
-    const value = data[0];
-
-    if (isNaN(value)) {
-        if (value === "A") return 11;
-        return 10;
-    }
-    return parseInt(value);
+    const value = card.split("-")[0];
+    return isNaN(value) ? (value === "A" ? 11 : 10) : parseInt(value);
 }
 
 function checkAce(card) {
-    return card[0] === "A" ? 1 : 0;
+    return card.startsWith("A") ? 1 : 0;
 }
 
-function reduceAce(playerSum, playerAceCount) {
-    while (playerSum > 21 && playerAceCount > 0) {
-        playerSum -= 10;
-        playerAceCount -= 1;
+function reduceAce(sum, aceCount) {
+    while (sum > 21 && aceCount > 0) {
+        sum -= 10;
+        aceCount--;
     }
-    return playerSum;
+    return sum;
 }
+
+function sendGameState() {
+    io.emit("game_state", {
+        players,
+        currentPlayer,
+    });
+}
+
+function checkWinner() {
+    const player1 = players["player1"];
+    const player2 = players["player2"];
+
+    if (player1.sum > 21) return "Player 2 Wins!";
+    if (player2.sum > 21) return "Player 1 Wins!";
+    if (player1.sum > player2.sum) return "Player 1 Wins!";
+    if (player2.sum > player1.sum) return "Player 2 Wins!";
+    return "It's a Tie!";
+}
+
+function initializePlayer(id) {
+    return { id, sum: 0, aceCount: 0, cards: [], wantsToRestart: false };
+}
+
+app.use(express.static("public"));
+
+io.on("connection", (socket) => {
+    console.log("User connected:", socket.id);
+
+    socket.on("set_name", (data) => {
+        socket.data.name = data.name;
+        if (!players["player1"]) {
+            players["player1"] = initializePlayer(socket.id);
+            socket.emit("player_assignment", { player: 1 });
+            io.emit("sys_c_connect", { name: data.name });
+        } else if (!players["player2"]) {
+            players["player2"] = initializePlayer(socket.id);
+            socket.emit("player_assignment", { player: 2 });
+            io.emit("sys_c_connect", { name: data.name });
+
+            if (Object.keys(players).length === 2) {
+                startGame();
+            }
+        } else {
+            socket.emit("player_assignment", { player: 0 });
+        }
+    });
+
+    socket.on("hit", () => {
+        const player = currentPlayer === 1 ? players["player1"] : players["player2"];
+        if (socket.id === player.id) {
+            drawCard(player);
+            if (player.sum > 21) {
+                currentPlayer = currentPlayer === 1 ? 2 : 1;
+            }
+            sendGameState();
+        }
+    });
+
+    socket.on("stay", () => {
+        const player = currentPlayer === 1 ? players["player1"] : players["player2"];
+        if (socket.id === player.id) {
+            currentPlayer = currentPlayer === 1 ? 2 : 1;
+            if (currentPlayer === 1 && players["player2"].sum > 0) {
+                io.emit("game_over", {
+                    result: checkWinner(),
+                    player1: players["player1"],
+                    player2: players["player2"]
+                });
+                io.emit("show_restart_button");
+            } else {
+                sendGameState();
+            }
+        }
+    });
+
+    socket.on("restart_game", () => {
+        const player = Object.values(players).find(p => p.id === socket.id);
+        if (player) {
+            player.wantsToRestart = true;
+            if (Object.values(players).every(p => p.wantsToRestart)) {
+                resetGame();
+                startGame();
+            }
+        }
+    });
+
+    socket.on("message", (data) => {
+        io.emit("message", { name: socket.data.name, message: data.message });
+    });
+
+    socket.on("disconnect", () => {
+        console.log("User disconnected:", socket.id);
+        if (socket.data.name) {
+            io.emit("sys_c_disconnect", { name: socket.data.name });
+            resetAllPlayers();
+            io.emit("request_name_reset");
+            resetGame();
+        }
+    });
+});
+
+function startGame() {
+    buildDeck();
+    shuffleDeck();
+    drawCard(players["player1"]);
+    drawCard(players["player1"]);
+    drawCard(players["player2"]);
+    drawCard(players["player2"]);
+    io.emit("game_start", { playerNames: [players["player1"].id, players["player2"].id] });
+    sendGameState();
+}
+
+function resetGame() {
+    for (let player of Object.values(players)) {
+        player.wantsToRestart = false;
+        player.sum = 0;
+        player.aceCount = 0;
+        player.cards = [];
+    }
+    currentPlayer = 1;
+    deck = [];
+}
+
+function resetAllPlayers() {
+    for (let key in players) {
+        delete players[key];
+    }
+}
+
+http.listen(60000, () => {
+    console.log("Server listening on port 60000");
+});
