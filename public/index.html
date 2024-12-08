@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -11,19 +12,24 @@
             font-family: Arial, sans-serif;
             text-align: center;
         }
+
         .player {
             margin: 20px;
         }
+
         .cards {
             display: flex;
             justify-content: center;
         }
+
         .controls {
             margin-top: 20px;
         }
+
         button {
             margin: 5px;
         }
+
         form {
             background: rgb(160, 205, 220);
             padding: 3px;
@@ -31,18 +37,45 @@
             bottom: 0;
             width: 100%;
         }
-        #n, #m {
+
+        #n,
+        #m {
             border: 0;
             padding: 3px;
         }
-        #n { width: 10%; }
-        #m { width: 70%; margin-right: 2px; }
-        form button { width: 9%; background: rgb(130, 224, 255); border: none; padding: 3px; }
-        #messages { list-style-type: none; margin: 0; padding: 0; }
-        #messages li { padding: 5px 10px; }
-        #messages li:nth-child(odd) { background: #eee; }
+
+        #n {
+            width: 10%;
+        }
+
+        #m {
+            width: 70%;
+            margin-right: 2px;
+        }
+
+        form button {
+            width: 9%;
+            background: rgb(130, 224, 255);
+            border: none;
+            padding: 3px;
+        }
+
+        #messages {
+            list-style-type: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        #messages li {
+            padding: 5px 10px;
+        }
+
+        #messages li:nth-child(odd) {
+            background: #eee;
+        }
     </style>
 </head>
+
 <body>
     <h1>Online Blackjack</h1>
     <div id="game">
@@ -80,22 +113,22 @@
             } else {
                 document.getElementById("status").innerText = `You are Player ${playerNumber}`;
             }
+            document.getElementById("restart").disabled = true;
         });
 
         socket.on("request_name_reset", () => {
-            document.getElementById("status").innerText = "Has player disconnected. Please enter your name again.";
+            document.getElementById("status").innerText = "A player has disconnected. Please enter your name again.";
             resetPlayers();
             $('#n').prop('disabled', false);
             $('#m').prop('disabled', true);
             playerNumber = 0;
             disableControls();
-            $('#restart').hide();
+            restartClicks = 0;
         });
 
         socket.on("game_start", (data) => {
             resetPlayers();
             enableControls();
-            $('#restart').hide();
         });
 
         socket.on("game_state", (data) => {
@@ -114,14 +147,16 @@
             revealAllCards(data.player2, 2);
             document.getElementById("player1-sum").innerText = data.player1.sum;
             document.getElementById("player2-sum").innerText = data.player2.sum;
-            $('#restart').show();
-            document.getElementById("restart").disabled = false;
         });
 
         socket.on("game_restart", () => {
             resetPlayers();
             enableControls();
-            $('#restart').hide();
+            restartClicks = 0;
+        })
+
+        socket.on("show_restart_button", () => {
+            document.getElementById("restart").disabled = false;
         })
 
         function updateGameState(data) {
@@ -143,8 +178,14 @@
                     cardsContainer.appendChild(img);
                 });
             } else {
-                cardsContainer.innerHTML = "<span>Cards hidden</span>";
                 scoreElement.innerText = "???";
+                player.cards.forEach((card) => {
+                    const img = document.createElement("img");
+                    img.src = `/cards/BACK.png`;
+                    img.style.width = "50px";
+                    img.style.margin = "5px";
+                    cardsContainer.appendChild(img);
+                });
             }
         }
 
@@ -170,12 +211,12 @@
         function enableControls() {
             document.getElementById("hit").disabled = false;
             document.getElementById("stay").disabled = false;
-            $('#restart').hide();
         }
 
         function disableControls() {
             document.getElementById("hit").disabled = true;
             document.getElementById("stay").disabled = true;
+            document.getElementById("restart").disabled = true;
         }
 
         document.getElementById("hit").addEventListener("click", () => {
@@ -190,7 +231,7 @@
             socket.emit("restart_game");
         })
 
-        $('form').submit(function(e) {
+        $('form').submit(function (e) {
             e.preventDefault();
             if (!$('#n').is(':disabled')) {
                 socket.emit('set_name', { name: $('#n').val() });
@@ -223,4 +264,5 @@
         });
     </script>
 </body>
+
 </html>

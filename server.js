@@ -109,6 +109,14 @@ io.on("connection", (socket) => {
             }
             sendGameState();
         }
+        if (players["player1"].sum > 21 && players["player2"].sum > 21) {
+            io.emit("game_over", {
+                result: checkWinner(),
+                player1: players["player1"],
+                player2: players["player2"]
+            });
+            io.emit("show_restart_button");
+        }
     });
 
     socket.on("stay", () => {
@@ -129,9 +137,16 @@ io.on("connection", (socket) => {
     });
 
     socket.on("restart_game", () => {
+        console.log("Restart game event received from:", socket.id);
         const player = Object.values(players).find(p => p.id === socket.id);
         if (player) {
             player.wantsToRestart = true;
+            const playerNumber = Object.keys(players).findIndex(key => players[key].id === socket.id) + 1;
+            if (playerNumber === 1) {
+                socket.emit("player_assignment", { player: 1 });
+            } else if (playerNumber === 2) {
+                socket.emit("player_assignment", { player: 2 });
+            }
             if (Object.values(players).every(p => p.wantsToRestart)) {
                 resetGame();
                 startGame();
